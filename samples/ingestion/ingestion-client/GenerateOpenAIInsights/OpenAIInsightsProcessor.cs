@@ -6,6 +6,7 @@
 namespace GenerateOpenAIInsightsFunction
 {
     using System;
+    using System.Collections.Generic;
     using System.Globalization;
     using System.IO;
     using System.Linq;
@@ -13,8 +14,12 @@ namespace GenerateOpenAIInsightsFunction
     using System.Net.Http;
     using System.Text;
     using System.Threading.Tasks;
+    using Azure;
+
     using Connector;
     using Connector.Serializable.OpenAIInsights;
+
+    using Microsoft.Extensions.Azure;
     using Microsoft.Extensions.Logging;
     using Newtonsoft.Json;
 
@@ -54,10 +59,11 @@ namespace GenerateOpenAIInsightsFunction
             // Step 03 - If the text is not in english, it needs to be translated, as OpenAI may underperform with other languages
             var localePrefix = GenerateOpenAIInsightsEnvironmentVariables.Locale.Split("-")[0];
 
+            TranslationConnector translationConnector = null;
             if (localePrefix != "en")
             {
-                var tc = new TranslationConnector(GenerateOpenAIInsightsEnvironmentVariables.AzureSpeechServicesKey, GenerateOpenAIInsightsEnvironmentVariables.AzureSpeechServicesRegion, log);
-                var translatedText = await tc.Translate(text, localePrefix, "en").ConfigureAwait(false);
+                translationConnector = new TranslationConnector(GenerateOpenAIInsightsEnvironmentVariables.AzureSpeechServicesKey, GenerateOpenAIInsightsEnvironmentVariables.AzureSpeechServicesRegion, log);
+                var translatedText = await translationConnector.Translate(text, localePrefix, "en").ConfigureAwait(false);
                 text = translatedText;
             }
 
@@ -70,13 +76,25 @@ namespace GenerateOpenAIInsightsFunction
             {
                 openAIResponses = await CallAzureOpenAI<OpenAIInsightsMessage>(text + Environment.NewLine + Environment.NewLine + predefinedPrompts, GenerateOpenAIInsightsEnvironmentVariables.AzureOpenAIDefaultDeploymentName, log);
 
+                if (localePrefix != "en")
+                {
+                    await TranslateOpenAIDefaultResponsesToOriginalTextLanguage(log, localePrefix, translationConnector, openAIResponses).ConfigureAwait(false);
+                }
+
                 // Step 06 - Do the Azure OpenAI Call for the user-defined prompts
                 // one request per user-defined prompt. Each UDP can have its own deployment name, and we can't just group them by deployment name
                 // because we don't know what the user will configure. Ex -- will json format be asked for?
                 var udprompts = new OpenAIUserDefinedPrompts(GenerateOpenAIInsightsEnvironmentVariables.AzureOpenAIUserDefinedPrompts);
-                foreach (OpenAIUserDefinedPrompt prompt in udprompts.UserDefinedPrompts)
+                foreach (var prompt in udprompts.UserDefinedPrompts)
                 {
                     var response = await CallAzureOpenAI<string>(prompt.Prompt, prompt.DeploymentName, log);
+
+                    if (localePrefix != "en")
+                    {
+                        var translatedText = await translationConnector.Translate(response, "en", localePrefix).ConfigureAwait(false);
+                        response = translatedText;
+                    }
+
                     openAIResponses.UserDefinedPromptsResponses.Add(prompt.FieldName, response);
                 }
 
@@ -95,15 +113,59 @@ namespace GenerateOpenAIInsightsFunction
                 // add more specific exception handling ... eg Http Request failed?
                 // var errorResponse = JsonConvert.DeserializeObject<OpenAIErrorResponse>(callResponseString);
                 // log.LogError(callResponseString);
-                // NOJOTA- -- TRAP THE 'TOO MANY REQUESTS' TO TRY AGAIN, OR HANDLE THE ERROR OF MESSAGE WITH
                 // TOO MANY TOKENS...
             }
+        }
 
-            // Step 04 - Get custom prompts and add to prompts above -- or do a 2nd request? performance?
+        private static async Task TranslateOpenAIDefaultResponsesToOriginalTextLanguage(ILogger log, string localePrefix, TranslationConnector translationConnector, OpenAIInsightsMessage openAIResponses)
+        {
+            openAIResponses.Summary = await translationConnector.Translate(openAIResponses.Summary, "en", localePrefix).ConfigureAwait(false);
+            openAIResponses.Sentiment = await translationConnector.Translate(openAIResponses.Sentiment, "en", localePrefix).ConfigureAwait(false);
+            openAIResponses.Category = await translationConnector.Translate(openAIResponses.Category, "en", localePrefix).ConfigureAwait(false);
 
-            // Step 05 - Translate back (or ask for responses in English?)
-            // Step 05 - Write out the file
-            // the code needs restructuring .--- translate back to the source Locale language
+            // translate topics
+            var translatedTopics = new List<string>();
+            foreach (var original in openAIResponses.Topics)
+            {
+                var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
+                log.LogInformation(original + " -> " + translated);
+                translatedTopics.Add(translated);
+            }
+
+            openAIResponses.Topics = translatedTopics;
+
+            // translate key phrases
+            var translatedKeyPhrases = new List<string>();
+            foreach (var original in openAIResponses.KeyPhrases)
+            {
+                var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
+                log.LogInformation(original + " -> " + translated);
+                translatedKeyPhrases.Add(translated);
+            }
+
+            openAIResponses.KeyPhrases = translatedKeyPhrases;
+
+            // translate company names (this can risky -- does the translation translated their names originally?)
+            var companies = new List<string>();
+            foreach (var original in openAIResponses.Companies)
+            {
+                var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
+                log.LogInformation(original + " -> " + translated);
+                translatedKeyPhrases.Add(translated);
+            }
+
+            openAIResponses.Companies = companies;
+
+            // translate company names (this can risky -- does the translation translated their names originally?)
+            var peopleAndTitles = new List<string>();
+            foreach (var original in openAIResponses.People)
+            {
+                var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
+                log.LogInformation(original + " -> " + translated);
+                translatedKeyPhrases.Add(translated);
+            }
+
+            openAIResponses.People = peopleAndTitles;
         }
 
         /// <summary>

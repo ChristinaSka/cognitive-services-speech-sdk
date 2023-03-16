@@ -33,6 +33,12 @@ namespace GenerateOpenAIInsightsFunction
 
         public async Task<string> Translate(string textToTranslate, string sourceLanguage, string targetLanguage = "en")
         {
+            // ignore requests to translate empty text
+            if (string.IsNullOrWhiteSpace(textToTranslate.Trim()))
+            {
+                return string.Empty;
+            }
+
             // Input and output languages are defined as parameters.
             var route = $"/translate?api-version=3.0&from={sourceLanguage}&to={targetLanguage}";
             var body = new object[] { new { Text = textToTranslate } };

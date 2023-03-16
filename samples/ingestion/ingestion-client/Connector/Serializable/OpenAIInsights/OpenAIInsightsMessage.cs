@@ -19,17 +19,22 @@ namespace Connector
         [JsonProperty("summary")]
         public string Summary { get; set; }
 
+        // disabling the warning as we need to replace the full lists when translating
+        #pragma warning disable CA2227
+
         [JsonProperty("topics")]
-        public List<string> Topics { get; private set; }
+        public List<string> Topics { get; set; }
 
         [JsonProperty("keyphrases")]
-        public List<string> KeyPhrases { get; private set; }
+        public List<string> KeyPhrases { get; set; }
 
         [JsonProperty("Companies and Organizations")]
-        public List<string> Companies { get; private set; }
+        public List<string> Companies { get; set; }
 
         [JsonProperty("People & titles")]
-        public List<string> People { get; private set; }
+        public List<string> People { get; set; }
+
+        #pragma warning restore CA2227
 
         [JsonProperty("sentiment")]
         public string Sentiment { get; set; }

@@ -41,7 +41,7 @@ namespace FetchTranscriptionFunction
 
             var transcriptionProcessor = new TranscriptionProcessor(this.serviceProvider);
 
-            await transcriptionProcessor.ProcessTranscriptionJobAsync(serviceBusMessage, this.serviceProvider,  log).ConfigureAwait(false);
+            await transcriptionProcessor.ProcessTranscriptionJobAsync(serviceBusMessage, log).ConfigureAwait(false);
         }
     }
 }

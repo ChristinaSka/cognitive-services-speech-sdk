@@ -11,33 +11,33 @@ namespace Connector
 
     public class OpenAIInsightsMessage
     {
-        public string Classification { get; set; }
+        public OpenAIInsightsMessage()
+        {
+            this.UserDefinedPromptsResponses = new Dictionary<string, string>();
+        }
 
-        public string Entities { get; set; }
-
-        public string KeyPhrases { get; set; }
-
-        public string Keywords { get; set; }
-
-        public string Sentiment { get; set; }
-
+        [JsonProperty("summary")]
         public string Summary { get; set; }
 
-        public Dictionary<string, string> UserDefinedPrompts { get; }
+        [JsonProperty("topics")]
+        public List<string> Topics { get; private set; }
 
-        // public static OpenAIInsightsMessage DeserializeMessage(string serviceBusMessage)
-        // {
-        //    if (serviceBusMessage == null)
-        //    {
-        //        throw new ArgumentNullException(nameof(serviceBusMessage));
-        //    }
+        [JsonProperty("keyphrases")]
+        public List<string> KeyPhrases { get; private set; }
 
-        // return JsonConvert.DeserializeObject<OpenAIInsightsMessage>(serviceBusMessage);
-        // }
+        [JsonProperty("Companies and Organizations")]
+        public List<string> Companies { get; private set; }
 
-        // public string CreateMessageString()
-        // {
-        //    return JsonConvert.SerializeObject(this);
-        // }
+        [JsonProperty("People & titles")]
+        public List<string> People { get; private set; }
+
+        [JsonProperty("sentiment")]
+        public string Sentiment { get; set; }
+
+        [JsonProperty("category")]
+        public string Category { get; set; }
+
+        [JsonProperty("userDefinedPromptResponses")]
+        public Dictionary<string, string> UserDefinedPromptsResponses { get; }
     }
 }

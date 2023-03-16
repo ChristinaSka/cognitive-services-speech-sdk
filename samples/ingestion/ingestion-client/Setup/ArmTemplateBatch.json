@@ -218,6 +218,78 @@
                 "description": "The administrator password of the SQL Server. If it is left empty, no SQL server/database will be created."
             }
         },
+        "AzureOpenAIResourceName": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "The name of the Azure OpenAI resource."
+            }
+        },
+        "AzureOpenAIServiceKey": {
+            "type": "securestring",
+            "defaultValue": "",
+            "metadata": {
+                "description": "The API key for the Azure OpenAI resource."
+            }
+        },
+        "AzureOpenAIDefaultDeploymentName": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "The name of the deployment name to be used for the following pre-defined Azure OpenAI options."
+            }
+        },
+        
+        "AddAzureOpenAISummarization": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Add a summary of the conversation"
+            }
+        },
+        "AddAzureOpenAISentimentAnalysis":{
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Add a sentiment analysis of the conversation"
+            }
+        },
+        "AddAzureOpenAIClassification":{
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Add classification (classes are pre-defined) of the conversation"
+            }
+        },
+        "AddAzureOpenAIEntityExtraction":{
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Add entity extraction of the conversation"
+            }
+        },
+        "AddAzureOpenAIKeyPhraseExtraction":{
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Add key phrases extraction of the conversation"
+            }
+        },
+        "AddAzureOpenAIKeywordsExtraction":{
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Add keywords extraction of the conversation"
+            }
+        },
+        "AzureOpenAIUserDefinedPrompts": {
+            "type": "string",
+            "defaultValue": "\"customer_name\", \"davinciDeploymentName\", \"What is the customer name?\"",
+            "maxLength": 2500,
+            "metadata": {
+                "description": "Provide your inputs in triplets, following the default example provided. The first value is the variable name in the final .json output, the second value is the name of the AOAI model deployment, the third value is the question/prompt itself. You can add multiple questions by adding multiple of those triplets and separate them with semicolon. The maximum length of the string is 2500 characters."
+            }
+        },
         "DeploymentId": {
             "type": "string",
             "defaultValue": "[utcNow()]",
@@ -235,6 +307,7 @@
         "HtmlResultOutputContainer": "html-result-output",
         "ErrorReportOutputContainer": "error-report",
         "ConsolidatedFilesOutputContainer": "consolidated-files",
+        "OutputContainer": "openai-result-output",
         "CreateHtmlResultFile": false,
         "CreateConsolidatedOutputFiles": false,
         "TimerBasedExecution": true,
@@ -258,6 +331,10 @@
         "StartTranscriptionFunctionId": "[resourceId('Microsoft.Web/sites', variables('StartTranscriptionFunctionName'))]",
         "FetchTranscriptionFunctionName": "[take(concat('FetchTranscriptionFunction-', variables('InstanceId')),60)]",
         "FetchTranscriptionFunctionId": "[resourceId('Microsoft.Web/sites', variables('FetchTranscriptionFunctionName'))]",
+        "AOAIFunctionName": "[take(concat('AzureOpenAIFunction-', variables('InstanceId')),60)]",
+        "UseAOAI": "[and(not(equals(parameters('AzureOpenAIResourceName'),'')), not(equals(parameters('AzureOpenAIServiceKey'),'')), not(equals(parameters('AzureOpenAIDefaultDeploymentName'),'')))]",
+        "EmptyArray": [],
+        "AOAIFunctionKeyVaultPermissions": ["get","list"],
         "AuthRuleRMK": "[resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', variables('ServiceBusName'),'RootManageSharedAccessKey')]",
         "AuthRuleFT": "[resourceId('Microsoft.ServiceBus/namespaces/queues/authorizationRules', variables('ServiceBusName'), 'fetch_transcription_queue','FetchTranscription')]",
         "AuthRuleCT": "[resourceId('Microsoft.ServiceBus/namespaces/queues/authorizationRules', variables('ServiceBusName'), 'start_transcription_queue','StartTranscription')]",
@@ -265,6 +342,7 @@
         "AzureSpeechServicesKeySecretName": "AzureSpeechServicesKey",
         "TextAnalyticsKeySecretName": "TextAnalyticsKey",
         "DatabaseConnectionStringSecretName": "DatabaseConnectionString",
+        "AOAIAPIKeySecretName": "AOAIAPIKey",
         "PiiCategories": "",
         "ConversationPiiCategories": "",
         "ConversationPiiRedaction": "None",
@@ -340,6 +418,13 @@
                                 "list"
                             ]
                         }
+                    },
+                    {
+                        "objectId": "[if(variables('UseAOAI'), reference(resourceId('Microsoft.Web/sites', variables('AOAIFunctionName')), '2019-08-01', 'full').identity.principalId, '00000000-0000-0000-0000-000000000000')]",
+                        "tenantId": "[subscription().tenantId]",
+                        "permissions": {
+                            "secrets": "[if(variables('UseAOAI'), variables('AOAIFunctionKeyVaultPermissions'), variables('EmptyArray'))]"
+                        }
                     }
                 ],
                 "sku": {
@@ -374,6 +459,18 @@
             ],
             "properties": {
                 "value": "[if(empty(parameters('TextAnalyticsKey')), 'NULL', parameters('TextAnalyticsKey'))]"
+            }
+        },
+        {
+            "type": "Microsoft.KeyVault/vaults/secrets",
+            "name": "[concat(variables('KeyVaultName'), '/', variables('AOAIAPIKeySecretName'))]",
+            "apiVersion": "2019-09-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.KeyVault/vaults/', variables('KeyVaultName'))]"
+            ],
+            "properties": {
+                "value": "[if(empty(parameters('AzureOpenAIServiceKey')), 'NULL', parameters('AzureOpenAIServiceKey'))]"
             }
         },
         {
@@ -570,6 +667,30 @@
                 "enableExpress": false
             }
         },
+        { 
+            "type": "Microsoft.ServiceBus/namespaces/queues", 
+            "apiVersion": "2017-04-01", 
+            "name": "[concat(variables('ServiceBusName'), '/openai_transcription_queue')]", 
+            "location": "[resourceGroup().location]", 
+            "dependsOn": [ 
+                "[resourceId('Microsoft.ServiceBus/namespaces', variables('ServiceBusName'))]" 
+            ], 
+            "properties": { 
+                "lockDuration": "PT5M", 
+                "maxSizeInMegabytes": 5120, 
+                "requiresDuplicateDetection": false, 
+                "requiresSession": false, 
+                "defaultMessageTimeToLive": "P10675199DT2H48M5.4775807S", 
+                "deadLetteringOnMessageExpiration": false, 
+                "enableBatchedOperations": false, 
+                "duplicateDetectionHistoryTimeWindow": "PT10M", 
+                "maxDeliveryCount": 1, 
+                "status": "Active", 
+                "autoDeleteOnIdle": "P10675199DT2H48M5.4775807S", 
+                "enablePartitioning": false, 
+                "enableExpress": false 
+            } 
+        }, 
         {
             "type": "Microsoft.Storage/storageAccounts/blobServices",
             "apiVersion": "2019-06-01",
@@ -737,6 +858,20 @@
             }
         },
         {
+            "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+            "apiVersion": "2019-06-01",
+            "name": "[concat(variables('StorageAccountName'), '/default/', variables('OutputContainer'))]",
+            "condition": "[variables('UseAOAI')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('StorageAccountName'), 'default')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName'))]"
+            ],
+            "properties": {
+                "publicAccess": "None"
+            }
+        },
+        {
             "name": "[variables('EventGridSystemTopicName')]",
             "type": "Microsoft.EventGrid/systemTopics",
             "apiVersion": "2020-04-01-preview",
@@ -795,6 +930,51 @@
                 "eventDeliverySchema": "EventGridSchema"
             }
         },
+        { 
+            "type": "Microsoft.EventGrid/systemTopics/eventSubscriptions", 
+            "apiVersion": "2020-04-01-preview", 
+            "name": "[concat(variables('EventGridSystemTopicName'), '/ProcessedJsonCreatedEvent')]",
+            "dependsOn": [ 
+                "[resourceId('Microsoft.EventGrid/systemTopics', variables('EventGridSystemTopicName'))]", 
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('StorageAccountName'), 'default')]", 
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName'))]", 
+                "[resourceId('Microsoft.ServiceBus/namespaces/queues', variables('ServiceBusName'), 'openai_transcription_queue')]" 
+            ], 
+            "properties": { 
+                "destination": { 
+                    "endpointType": "ServiceBusQueue", 
+                    "properties": { 
+                        "resourceId": "[concat('/subscriptions/',subscription().subscriptionId,'/resourceGroups/',resourceGroup().name,'/providers/Microsoft.ServiceBus/namespaces/', variables('ServiceBusName'),'/queues/openai_transcription_queue')]"
+                    } 
+                }, 
+                "filter": { 
+                    "includedEventTypes": [ 
+                        "Microsoft.Storage.BlobCreated" 
+                    ], 
+                    "advancedFilters": [ 
+                        { 
+                            "operatorType": "StringBeginsWith", 
+                            "key": "Subject", 
+                            "values": [ 
+                                "[concat('/blobServices/default/containers/', variables('JsonResultOutputContainer'), '/blobs')]" 
+                            ] 
+                        }, 
+                        { 
+                            "operatorType": "StringContains", 
+                            "key": "data.api", 
+                            "values": [ 
+                                "FlushWithClose", 
+                                "PutBlob", 
+                                "PutBlockList", 
+                                "CopyBlob" 
+                            ] 
+                        } 
+                    ] 
+                }, 
+                "labels": [], 
+                "eventDeliverySchema": "EventGridSchema" 
+            }
+        }, 
         {
             "apiVersion": "2018-02-01",
             "type": "Microsoft.Web/serverfarms",
@@ -944,6 +1124,72 @@
                 "ConversationPiiInferenceSource": "[variables('ConversationPiiInferenceSource')]",
                 "ConversationPiiSetting":"[variables('ConversationPiiRedaction')]",
                 "ConversationSummarizationOptions":"[variables('ConversationSummarizationOptions')]"
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2020-09-01",
+            "name": "[variables('AOAIFunctionName')]",
+            "condition": "[variables('UseAOAI')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('AppServicePlanName'))]"
+            ],
+            "kind": "functionapp",
+            "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('AppServicePlanName'))]",
+                "httpsOnly": "true"
+            },
+            "identity": {
+                "type": "SystemAssigned"
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites/config",
+            "name": "[concat(variables('AOAIFunctionName'), '/AppSettings')]",
+            "condition": "[variables('UseAOAI')]",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2020-09-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Insights/components', variables('AppInsightsName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName'))]",
+                "[concat('Microsoft.Web/sites/', variables('AOAIFunctionName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults', variables('KeyVaultName'))]",
+                "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('KeyVaultName'), variables('AOAIAPIKeySecretName'))]",
+                "[variables('AuthRuleRMK')]",
+                "[variables('AuthRuleFT')]",
+                "[variables('AuthRuleCT')]"
+            ],
+            "tags": {
+                "displayName": "WebAppSettings"
+            },
+            "properties": {
+                "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', variables('AppInsightsName')), '2020-02-02-preview').ConnectionString]",
+                "AzureServiceBus": "[listKeys(variables('AuthRuleRMK'),'2015-08-01').primaryConnectionString]",
+                "AzureWebJobsStorage": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('StorageAccountName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName')), providers('Microsoft.Storage', 'storageAccounts').apiVersions[0]).keys[0].value, ';EndpointSuffix=', variables('EndpointSuffix'))]",
+                "AzureWebJobsDashboard": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('StorageAccountName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('StorageAccountName')), providers('Microsoft.Storage', 'storageAccounts').apiVersions[0]).keys[0].value, ';EndpointSuffix=', variables('EndpointSuffix'))]",
+                "FetchTranscriptionServiceBusConnectionString": "[listKeys(variables('AuthRuleFT'),'2015-08-01').primaryConnectionString]",
+                "AzureSpeechServicesKey": "[concat('@Microsoft.KeyVault(VaultName=', variables('KeyVaultName'), ';SecretName=', variables('AzureSpeechServicesKeySecretName'), ')')]",
+                "AzureSpeechServicesRegion": "[parameters('AzureSpeechServicesRegion')]",
+                "FUNCTIONS_EXTENSION_VERSION": "~4",
+                "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+                "InitialPollingDelayInMinutes": "[variables('InitialPollingDelayInMinutes')]",
+                "MaxPollingDelayInMinutes": "[variables('MaxPollingDelayInMinutes')]",
+                "JsonResultOutputContainer": "[variables('JsonResultOutputContainer')]",
+                "RetryLimit": "[variables('RetryLimit')]",
+                "Locale": "[parameters('Locale')]",
+                "AddAzureOpenAISummarization": "[parameters('AddAzureOpenAISummarization')]",
+                "AddAzureOpenAISentimentAnalysis": "[parameters('AddAzureOpenAISentimentAnalysis')]",
+                "AddAzureOpenAIClassification": "[parameters('AddAzureOpenAIClassification')]",
+                "AddAzureOpenAIEntityExtraction": "[parameters('AddAzureOpenAIEntityExtraction')]",
+                "AddAzureOpenAIKeyPhraseExtraction": "[parameters('AddAzureOpenAIKeyPhraseExtraction')]",
+                "AddAzureOpenAIKeywordsExtraction": "[parameters('AddAzureOpenAIKeywordsExtraction')]",
+                "AzureOpenAIResourceName": "[parameters('AzureOpenAIResourceName')]",
+                "AzureOpenAIServiceKey": "[concat('@Microsoft.KeyVault(VaultName=', variables('KeyVaultName'), ';SecretName=', variables('AOAIAPIKeySecretName'), ')')]",
+                "AzureOpenAIDefaultDeploymentName": "[parameters('AzureOpenAIDefaultDeploymentName')]",
+                "AzureOpenAIUserDefinedPrompts": "[parameters('AzureOpenAIUserDefinedPrompts')]",
+                "OutputContainer": "[variables('OutputContainer')]",
+                "WEBSITE_RUN_FROM_PACKAGE": "[variables('FetchTranscriptionBinary')]"
             }
         }
     ],

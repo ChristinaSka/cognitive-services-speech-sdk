@@ -7,16 +7,9 @@ namespace GenerateOpenAIInsightsFunction
 {
     using System;
     using System.Threading.Tasks;
-
     using Azure.Messaging.EventGrid;
-
+    using Azure.Messaging.EventGrid.SystemEvents;
     using Microsoft.Azure.WebJobs;
-
-    // using Microsoft.Azure.WebJobs.Host;
-
-    // using Microsoft.Azure.EventGrid.Models;
-
-    // using Microsoft.Azure.WebJobs.Extensions.EventGrid;
     using Microsoft.Extensions.Logging;
 
     public class GenerateOpenAIInsights
@@ -31,34 +24,36 @@ namespace GenerateOpenAIInsightsFunction
         [FunctionName("GenerateOpenAIInsights")]
         public async Task Run([ServiceBusTrigger("openai_transcription_queue", Connection = "AzureServiceBus")] string message, ILogger log)
         {
+            log.LogInformation($"C# Service bus triggered function executed at: {DateTime.Now}");
+
             if (log == null)
             {
                 throw new ArgumentNullException(nameof(log));
             }
 
-            log.LogInformation($"C# Service bus triggered function executed at: {DateTime.Now}");
-
-            if (message == null)
+            if (string.IsNullOrEmpty(message))
             {
-                log.LogInformation($"Found invalid service bus message: {message}. Stopping execution.");
+                log.LogInformation($"Found null/empty service bus message. Stopping execution.");
                 return;
             }
 
+            // schema for this event is documented here: https://learn.microsoft.com/en-us/azure/event-grid/event-schema-blob-storage?tabs=event-grid-event-schema
             var eventGridEvent = EventGridEvent.Parse(new BinaryData(message));
             if (eventGridEvent.EventType != "Microsoft.Storage.BlobCreated")
             {
-                log.LogWarning($"Found invalid EventGridType: {eventGridEvent.EventType}. Ignoring.");
+                log.LogWarning($"Found unexpected EventGridType: {eventGridEvent.EventType}. Should be Microsoft.Storage.BlobCreated. Ignoring message.");
                 return;
             }
 
-            // "subject": "/blobServices/default/containers/kmoaiprocessed/blobs/New York Brochure.json",
-            // data."url": "https://kmoaistorage.blob.core.windows.net/kmoaiprocessed/New York Brochure.json",
-            log.LogInformation($"C# ServiceBus queue trigger new blog: {eventGridEvent.Subject}");
+            // extract the URL part from the EventGrid paylog
+            var newBlobData = eventGridEvent.Data.ToObjectFromJson<StorageBlobCreatedEventData>();
 
-            // var transcriptionProcessor = new TranscriptionProcessor(this.serviceProvider);
-            var a = this.serviceProvider;
+            // Example: "https://kmoaistorage.blob.core.windows.net/kmoaiprocessed/filename.json",
+            log.LogInformation($"C# ServiceBus queue trigger new blob: {newBlobData.Url}");
 
-            // await transcriptionProcessor.ProcessTranscriptionJobAsync(serviceBusMessage, this.serviceProvider, log).ConfigureAwait(false);
+            var openaiInsightsProcessor = new OpenAIInsightsProcessor(this.serviceProvider);
+
+            await openaiInsightsProcessor.GetOpenAIInsightsAsync(newBlobData.Url, log).ConfigureAwait(false);
         }
     }
 }

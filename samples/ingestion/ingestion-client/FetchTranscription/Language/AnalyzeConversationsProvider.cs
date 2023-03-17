@@ -167,16 +167,16 @@ namespace Language
                 data.Last().AnalysisInput.Conversations[0].ConversationItems.Add(utterance);
 
                 // for summarization
-                var stratergy = FetchTranscriptionEnvironmentVariables.ConversationSummarizationOptions.Stratergy;
-                var roleKey = stratergy.Key switch
+                var strategy = FetchTranscriptionEnvironmentVariables.ConversationSummarizationOptions.Stratergy;
+                var roleKey = strategy.Key switch
                 {
                     RoleAssignmentMappingKey.Channel => recognizedPhrase.Channel,
                     RoleAssignmentMappingKey.Speaker => recognizedPhrase.Speaker,
-                    _ => throw new ArgumentOutOfRangeException($"Unknown stratergy.Key: {stratergy.Key}"),
+                    _ => throw new ArgumentOutOfRangeException($"Unknown stratergy.Key: {strategy.Key}"),
                 };
-                if (!stratergy.Mapping.TryGetValue(roleKey, out var role))
+                if (!strategy.Mapping.TryGetValue(roleKey, out var role))
                 {
-                    role = stratergy.FallbackRole;
+                    role = strategy.FallbackRole;
                 }
 
                 if (role != Role.None && count + textCount < FetchTranscriptionEnvironmentVariables.ConversationSummarizationOptions.InputLengthLimit)

@@ -14,19 +14,20 @@ namespace GenerateOpenAIInsightsFunction
     using System.Net.Http;
     using System.Text;
     using System.Threading.Tasks;
-    using Azure;
 
     using Connector;
     using Connector.Serializable.OpenAIInsights;
 
-    using Microsoft.Extensions.Azure;
     using Microsoft.Extensions.Logging;
+
     using Newtonsoft.Json;
 
     using Polly;
 
     public class OpenAIInsightsProcessor
     {
+        private static readonly double OpenAICharactersPerToken = 3.5;
+
         private static readonly StorageConnector StorageConnectorInstance = new StorageConnector(GenerateOpenAIInsightsEnvironmentVariables.AzureWebJobsStorage);
 
         private readonly IServiceProvider serviceProvider;
@@ -74,7 +75,7 @@ namespace GenerateOpenAIInsightsFunction
             OpenAIInsightsMessage openAIResponses = null;
             try
             {
-                openAIResponses = await CallAzureOpenAI<OpenAIInsightsMessage>(text + Environment.NewLine + Environment.NewLine + predefinedPrompts, GenerateOpenAIInsightsEnvironmentVariables.AzureOpenAIDefaultDeploymentName, log);
+                openAIResponses = await CallAzureOpenAI<OpenAIInsightsMessage>(text, predefinedPrompts, GenerateOpenAIInsightsEnvironmentVariables.AzureOpenAIDefaultDeploymentName, log);
 
                 if (localePrefix != "en")
                 {
@@ -87,7 +88,7 @@ namespace GenerateOpenAIInsightsFunction
                 var udprompts = new OpenAIUserDefinedPrompts(GenerateOpenAIInsightsEnvironmentVariables.AzureOpenAIUserDefinedPrompts);
                 foreach (var prompt in udprompts.UserDefinedPrompts)
                 {
-                    var response = await CallAzureOpenAI<string>(prompt.Prompt, prompt.DeploymentName, log);
+                    var response = await CallAzureOpenAI<string>(text, prompt.Prompt, prompt.DeploymentName, log);
 
                     if (localePrefix != "en")
                     {
@@ -108,12 +109,7 @@ namespace GenerateOpenAIInsightsFunction
             }
             catch (Exception ex)
             {
-                log.LogError("Exception while doing OpenAI calls (retries can have been exceeded, configuration can be wrong, etc.):" + ex.Message, ex);
-
-                // add more specific exception handling ... eg Http Request failed?
-                // var errorResponse = JsonConvert.DeserializeObject<OpenAIErrorResponse>(callResponseString);
-                // log.LogError(callResponseString);
-                // TOO MANY TOKENS...
+                log.LogError("Exception while doing Azure OpenAI call (retries can have been exceeded, configuration can be wrong, etc.): " + ex.Message, ex);
             }
         }
 
@@ -128,7 +124,6 @@ namespace GenerateOpenAIInsightsFunction
             foreach (var original in openAIResponses.Topics)
             {
                 var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
-                log.LogInformation(original + " -> " + translated);
                 translatedTopics.Add(translated);
             }
 
@@ -139,7 +134,6 @@ namespace GenerateOpenAIInsightsFunction
             foreach (var original in openAIResponses.KeyPhrases)
             {
                 var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
-                log.LogInformation(original + " -> " + translated);
                 translatedKeyPhrases.Add(translated);
             }
 
@@ -150,7 +144,6 @@ namespace GenerateOpenAIInsightsFunction
             foreach (var original in openAIResponses.Companies)
             {
                 var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
-                log.LogInformation(original + " -> " + translated);
                 translatedKeyPhrases.Add(translated);
             }
 
@@ -161,7 +154,6 @@ namespace GenerateOpenAIInsightsFunction
             foreach (var original in openAIResponses.People)
             {
                 var translated = await translationConnector.Translate(original, "en", localePrefix).ConfigureAwait(false);
-                log.LogInformation(original + " -> " + translated);
                 translatedKeyPhrases.Add(translated);
             }
 
@@ -169,15 +161,48 @@ namespace GenerateOpenAIInsightsFunction
         }
 
         /// <summary>
-        /// NOTAJOTA - Implement Samer's logic here
+        /// Convert text into a dialogue format
+        /// TODO -- needs replicating logic and configurations from ingestion\ingestion-client\FetchTranscription\Language\AnalyzeConversationsProvider.cs
+        /// Implies refactoring of said code
         /// </summary>
         /// <param name="transcription"></param>
-        /// <returns></returns>
+        /// <returns>Transcription in dialogue format</returns>
         private static string ExtractDialogueStrings(SpeechTranscript transcription)
         {
-            // List<string> strings = new List<string>();
-            // NOTAJOTA: Need to have a word with Samer
+            // simplistic implementation
             var text = transcription.CombinedRecognizedPhrases.First().Display; // lexical has no punctuation or initials
+            return text;
+        }
+
+        /// <summary>
+        /// Estimate the number of tokens in a string of text.
+        /// Important note: on average, for english, each token is 4-5 characters long. As there doesn't seem to be reliable libraries
+        /// to count tokens in c#, this method does a conservative estimate.
+        /// </summary>
+        /// <param name="text">English language text</param>
+        /// <returns>Estimated number of OpenAI tokens in a string</returns>
+        private static int CountTokens(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0;
+            }
+
+            return (int)(text.Length / OpenAICharactersPerToken);
+        }
+
+        private static string TrimToAvailableTokens(string text, int maxTokens)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            if (CountTokens(text) > maxTokens)
+            {
+                return text.Substring(0, (int)(maxTokens * 3.5));
+            }
+
             return text;
         }
 
@@ -251,28 +276,39 @@ namespace GenerateOpenAIInsightsFunction
         /// <summary>
         /// Make an API call to AzureOpenAI's service and return the literal un-deserialized response for upstream parsing.
         /// </summary>
+        /// <param name="text">The context, the text on which the prompt will act upon</param>
         /// <param name="prompt">The prompt</param>
         /// <param name="modelDeploymentName">The name of the Azure OpenAI deployment name</param>
         /// <param name="log">Instance of logger</param>
         /// <returns>Response from OpenAI</returns>
-        private static async Task<TOpenAIPromptResponse> CallAzureOpenAI<TOpenAIPromptResponse>(string prompt, string modelDeploymentName, ILogger log)
+        private static async Task<TOpenAIPromptResponse> CallAzureOpenAI<TOpenAIPromptResponse>(string text, string prompt, string modelDeploymentName, ILogger log)
         {
-            log.LogInformation(prompt);
-
             // The code below should use https://github.com/Azure/azure-sdk-for-net/tree/main/sdk/openai/Azure.AI.OpenAI but this is not yet ready for use.
             var apiVersion = "2022-12-01";
             var url = $"https://{GenerateOpenAIInsightsEnvironmentVariables.AzureOpenAIResourceName}.openai.azure.com/openai/deployments/{modelDeploymentName}/completions?api-version={apiVersion}";
 
-            log.LogInformation(url);
+            // check if request is too long, token-wise. Assuming 750 tokens left for the response
+            // TO-DO: if modelDeploymentName is for a non-DaVinci model, then the max tokens will be different. This will imply asking OpenAI what the
+            // model is, and then using the appropriate max tokens.
+            if (CountTokens(text + Environment.NewLine + Environment.NewLine + prompt) > 4096 - 750)
+            {
+                var availableTokensForText = 4096 - CountTokens(prompt) - 750;
+
+                log.LogWarning($"OpenAI text is too long for DaVinci 03, token-wise. Trimming to {availableTokensForText * OpenAICharactersPerToken} chars.");
+
+                text = TrimToAvailableTokens(text, availableTokensForText);
+            }
 
             // create http request body
             object body = new
             {
-                prompt = prompt,
-                max_tokens = 750, // The maximum number of tokens to generate in the completion.
+                prompt = text + Environment.NewLine + Environment.NewLine + prompt,
+                max_tokens = 750, // The maximum number of tokens to generate in the completion (arbitrary value)
                 temperature = 0
             };
 
+            // IMPORTANT: THIS LOG HAS TO BE LEFT COMMENTED AS IT PRINTS OUT POTENTIALLY CONFIDENTIAL INFORMATION 
+            // log.LogInformation(text + Environment.NewLine + Environment.NewLine + prompt);
             var requestBody = JsonConvert.SerializeObject(body);
 
             using (var client = new HttpClient())
@@ -315,19 +351,34 @@ namespace GenerateOpenAIInsightsFunction
                     return response;
                 }, pollyContext);
 
-                // if all the retries fail, the next line will ensure an exception is generated
-                response.EnsureSuccessStatusCode();
-
                 // And read response as a string (containing Json)
                 var completions = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                // if all the retries fail, the next line will ensure an exception is generated.
+                // The same happens if there's an applicational error
+                try
+                {
+                    // do this just to be able to log the exact response from OpenAI (there has to be a better way)
+                    response.EnsureSuccessStatusCode();
+                }
+                catch (Exception)
+                {
+                    if (completions == null)
+                    {
+                        completions = "(completions is null)";
+                    }
+
+                    log.LogError("Error response from OpenAI Http call: " + completions);
+                    throw; // rethrow
+                }
 
                 log.LogInformation(completions);
 
                 var successResponse = JsonConvert.DeserializeObject<OpenAISuccessResponse>(completions);
 
-                // NOTAJOTA: FALTA TESTAR AQUI SE A RESPOSTA FOI ERRO OPENAI OU NÃO!
                 var openAiResponseText = successResponse.Choices[0].Text; // this has the response from the completions API
 
+                // if we got here, it means that Azure OpenAI did not return an applicational error, so let's continue processing
                 if (typeof(TOpenAIPromptResponse) != typeof(string))
                 {
                     return JsonConvert.DeserializeObject<TOpenAIPromptResponse>(openAiResponseText);
